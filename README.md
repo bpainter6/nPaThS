@@ -1,2 +1,2 @@
 # MUTTS
-A "multichannel uncoupled time-dependent thermohydraulic solver" (MUTTS) for simple, low-order multichannel analysis of light water reactor (LWR) cores
+An 'n-channel, Pandas-based, Thermohydraulic Solver' (nPaThS) for solving flow conditions and temperatures in LWR cores
