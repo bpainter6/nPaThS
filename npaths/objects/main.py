@@ -42,7 +42,7 @@ class MultiChannel():
     
     """
     
-    def __init__(self,power,dz,hyD):
+    def __init__(self,power,dz,hyD,Af):
         """Initializes the MultiChannel object by filling all data specificed
         in the dictionaries
         
@@ -61,27 +61,32 @@ class MultiChannel():
         nAxial = len(dz)
         
         layerIds = {}
-        layerIds['channel'] = list(range(nChannel+1))
-        layerIds['axial'] = list(range(nAxial+1))
+        layerIds['channel'] = list(range(nChannel))
+        layerIds['axial'] = list(range(nAxial))
         
         # preallocate layer attributes
         # layers = ['multiChannel','channel','axial','rod','radial']
         layers = ['multiChannel','channel','axial']
         for layer in layers:
-            frame = dfs.preallocateDF(layer,layerIds=layerIds)
+            frame = dfs.preallocateDF(layer,layerIds)
             setattr(self,layer,frame)
         
         # specify remaining information
         for channelId in layerIds['channel']:
             # update properties in the channel
-            self.update('channel',(channelId),['hyD'],hyD[channelId])
+            self.update('channel',(channelId),['hyD','Af'],(hyD[channelId],
+                                                            Af[channelId]))
             
             for axialId in layerIds['axial']:
                 # update properties in the axial layer
                 out = (dz[axialId],power[channelId,axialId])
                 self.update('axial',(channelId,axialId),['dz','q'],out)
+        
+        self.layerIds = layerIds 
+        self.nChannel = nChannel
+        self.nAxial   = nAxial
     
-    def _stepSolve(self,mDotFrame):
+    def _stepSolve(self):
         """Fully solves the system for the specified input mass flow rates.
         A single solution step in solving the full core coolant props
         
@@ -102,8 +107,8 @@ class MultiChannel():
         # solve axial bulk coolant properties
         for channelId in layerIds['channel']:
             # get the inlet conditions and flow geometry for the channel
-            mDot,tIn,pIn,hyD = self.get('channel',(channelId),
-                                           ['mDot','tIn','pIn','hyD'])
+            mDot,tIn,pIn,hyD,Af = self.get('channel',(channelId),
+                                           ['mDot','tIn','pIn','hyD','Af'])
             
             # solve and save coolant properties in each axial layer
             for axialId in layerIds['axial']:
@@ -111,11 +116,14 @@ class MultiChannel():
                 q,dz = self.get('axial',(channelId,axialId),['q','dz'])
                 
                 # solve coolant properties for the axial layer
-                out = axl.axialHelper(pIn,tIn,mDot,q,hyD,dz)
+                out = axl.axialHelper(pIn,tIn,mDot,q,hyD,Af,dz)
                 
                 # save coolant properties for the axial layer
                 self.update('axial',(channelId,axialId),
-                            ['pIn','p','pOut','tIn','t','tOut'],out)
+                            ["pIn","p","pOut","tIn","t","tOut",
+                            "dPtot","dPaccl","dPgrav","dPfric",
+                            "cp","rho","mu","vel"],
+                            out)
                 
                 # update entrance conditions for the next layer
                 tIn,pIn = self.get('axial',(channelId,axialId),['tOut','pOut'])
@@ -127,12 +135,16 @@ class MultiChannel():
         layerIds = self.layerIds
         
         # divide flow equally between channels
-        mDotInit = self.get('multiChannel',(),['mDot'])/self.nChannels
+        mDotDF = self.get('multiChannel',slice(None),['mDot'])
+        mDot = float(mDotDF['mDot'])
+        mDotInit = mDot/self.nChannel
         
         # assign inital flow values to each channel
         for channelId in layerIds['channel']:
             self.update('channel',(channelId),['mDot'],mDotInit)
-    
+        
+        self._stepSolve()
+        
     def _radialSolve(self):
         """Solves rod properties using the obtained coolant properties"""
         pass
@@ -153,9 +165,15 @@ class MultiChannel():
             
         """
         
+        layerIds = self.layerIds
+        
         self.multiChannel['mDot'] = mDot
         self.multiChannel['pIn'] = pIn
         self.multiChannel['tIn'] = tIn
+        
+        # assign boundary conditions to each channel
+        for channelId in layerIds['channel']:
+            self.update('channel',(channelId),['pIn','tIn'],(pIn,tIn))
         
         # solve coolant properties at each axial layer
         self._axialSolve()
@@ -195,8 +213,9 @@ class MultiChannel():
         
         """
         
-        data = self.get(layer,index,props)
-        data = vals
+        data = getattr(self,layer)
+        data.loc[index,props] = vals
+        setattr(self,layer,data)
     
     def add(self,layer,df):
         """adds a data frame to a layer in the object

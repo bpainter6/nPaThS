@@ -6,7 +6,6 @@ Created on Tue Mar 22 21:14:23 2022
 """
 
 from CoolProp.CoolProp import PropsSI
-from math import exp, log, pi
 import numpy as np
 import copy
 
@@ -17,12 +16,12 @@ WATER = 'IF97::Water'
 ### MAIN ######################################################################
 ###############################################################################
 
-def axialHelper(pIn,tIn,mDot,q,hyD,dz):
+def axialHelper(pIn,tIn,mDot,q,hyD,Af,dz):
     """Solves bulk and exit coolant properties within an axial layer"""
     
     # entrance flow rate conditions
     inFlow = Flow()
-    inFlow.solve(mDot,"P",pIn,"T",tIn,WATER)
+    inFlow.solve(mDot,Af,"P",pIn,"T",tIn,WATER)
     
     # inital guess for bulk and outlet coolant props
     avFlow  = copy.deepcopy(inFlow)
@@ -41,7 +40,7 @@ def axialHelper(pIn,tIn,mDot,q,hyD,dz):
         while True:
             
             # calc outlet conditions
-            outFlow = outFlow.solve(mDot,"P",pOut,"T",tOut,WATER)
+            outFlow.solve(mDot,Af,"P",pOut,"T",tOut,WATER)
             
             # calc bulk coolant flow
             avFlow = averageFlow(outFlow,inFlow)
@@ -56,7 +55,7 @@ def axialHelper(pIn,tIn,mDot,q,hyD,dz):
                 break
         
         # calculate pressure drop
-        dP = PressDrop(inFlow,outFlow,avFlow,hyD,dz)
+        dP = PressDrop(inFlow,outFlow,avFlow,mDot,hyD,Af,dz)
         
         # solve Pout
         pOut = pIn - dP['dPtotal']
@@ -66,8 +65,20 @@ def axialHelper(pIn,tIn,mDot,q,hyD,dz):
         if convTest(pOuts):
             break
     
-    # return the exit temperature and pressure for the next axial layer
-    ###########################################################################
+    # average pressure, temperature
+    p = (pIn+pOut)/2
+    t = (tIn+tOut)/2
+    
+    # extract pressure drop data
+    dPtot,dPaccl,dPgrav,dPfric = \
+        dP['dPtotal'],dP['dPaccl'],dP['dPgrav'],dP['dPfric']
+    
+    # extract bulk coolant props
+    rho,mu,vel = \
+        avFlow['rho'],avFlow['mu'],avFlow['vel']
+    
+    # output results
+    return pIn,p,pOut,tIn,t,tOut,dPtot,dPaccl,dPgrav,dPfric,cp,rho,mu,vel
 
 ###############################################################################
 ### HELPER FUNCTIONS ##########################################################
@@ -124,26 +135,26 @@ class Flow(dict):
     def __init__(self):
         """initialize the flow object"""
     
-    def solve(self,mDot,Af,**kwargs):
+    def solve(self,mDot,Af,*args):
         """solve the flow properties based on flow conditions"""
         
         # cp J/kgK
-        self['cp']  = PropsSI("C",**kwargs)
+        self['cp']  = PropsSI("C",*args)
         
         # viscosity Pa-sec
-        self['mu']  = PropsSI("V",**kwargs) 
+        self['mu']  = PropsSI("V",*args) 
         
         # density kg/m**3
-        self['rho'] = PropsSI("D",**kwargs)
+        self['rho'] = PropsSI("D",*args)
         
         # fluid velocity
-        self['vel'] = mDot/self.rho/Af
+        self['vel'] = mDot/self['rho']/Af
 
 class PressDrop(dict):
     """Object that calculates and stores the partial pressure drops and total 
     pressure drop in a system"""
     
-    def __init__(self,inFlow,outFlow,avFlow,hyD,dz):
+    def __init__(self,inFlow,outFlow,avFlow,mDot,hyD,Af,dz):
         """Calculates partial pressure drops and stores them in the object"""
         
         # coolant boundary properties
@@ -154,8 +165,6 @@ class PressDrop(dict):
         rho  = avFlow['rho']
         mu   = avFlow['mu']
         vel  = avFlow['vel']
-        Af   = avFlow['Af']
-        mDot = avFlow['mDot']
         
         # Re number and friction factor
         Re = hyD*mDot/(mu*Af)
