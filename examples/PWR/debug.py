@@ -5,7 +5,7 @@ Created on Fri Mar 25 02:04:30 2022
 @author: 17066
 """
 
-import mutts
+import npaths
 import numpy as np
 import pickle
 import tests as tst
@@ -21,4 +21,4 @@ with open('power.pkl', 'rb') as f:
 hyD = np.array(31*[5])
 dz = np.array(3*[21]+12*[20]+3*[21])/100
 
-core = mutts.MultiChannel(power,dz,hyD)
+core = npaths.MultiChannel(power,dz,hyD)

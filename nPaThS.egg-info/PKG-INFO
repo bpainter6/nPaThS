@@ -1,0 +1,19 @@
+Metadata-Version: 2.1
+Name: nPaThS
+Version: 0.0.1
+Summary: An 'n-channel, Pandas-based, Thermohydraulic Solver' (nPaThS)     for solving flow conditions and temperatures in LWR cores
+Home-page: https://github.com/bpainter6/nPaThs
+Author: Bailey Painter
+Author-email: bpainter6@gatech.edu
+License: UNKNOWN
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+
+# MUTTS
+A "multichannel uncoupled time-dependent thermohydraulic solver" (MUTTS) for simple, low-order multichannel analysis of light water reactor (LWR) cores
+
+
