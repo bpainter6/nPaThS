@@ -5,12 +5,11 @@ Created on Tue Mar 22 21:12:51 2022
 @author: 17066
 """
 
-import numpy as np
-import copy
 import pandas as pd
+import numpy as np
 from npaths.functions import dataframes as dfs
 from npaths.functions import axial as axl
-from npaths.functions import radial as rad
+# from npaths.functions import radial as rad
 
 # Global vars
 WATER = 'IF97::Water'
@@ -86,69 +85,6 @@ class MultiChannel():
         self.nChannel = nChannel
         self.nAxial   = nAxial
     
-    def _stepSolve(self):
-        """Fully solves the system for the specified input mass flow rates.
-        A single solution step in solving the full core coolant props
-        
-        parameters
-        ----------
-        mDotDict - dictionary
-            keys describe the name of a channel, values are a float describing
-            the mass flow rate through the channel
-        Pin - float
-            inlet pressure to the multi channel system
-        Tin - float
-            inlet temperature to the multi channel system
-        
-        """
-        
-        layerIds = self.layerIds
-        
-        # solve axial bulk coolant properties
-        for channelId in layerIds['channel']:
-            # get the inlet conditions and flow geometry for the channel
-            mDot,tIn,pIn,hyD,Af = self.get('channel',(channelId),
-                                           ['mDot','tIn','pIn','hyD','Af'])
-            
-            # solve and save coolant properties in each axial layer
-            for axialId in layerIds['axial']:
-                # get power production and geometry at the axial layer
-                q,dz = self.get('axial',(channelId,axialId),['q','dz'])
-                
-                # solve coolant properties for the axial layer
-                out = axl.axialHelper(pIn,tIn,mDot,q,hyD,Af,dz)
-                
-                # save coolant properties for the axial layer
-                self.update('axial',(channelId,axialId),
-                            ["pIn","p","pOut","tIn","t","tOut",
-                            "dPtot","dPaccl","dPgrav","dPfric",
-                            "cp","rho","mu","vel"],
-                            out)
-                
-                # update entrance conditions for the next layer
-                tIn,pIn = self.get('axial',(channelId,axialId),['tOut','pOut'])
-                
-    def _axialSolve(self):
-        """Iteratively solves coolant properties. Converges when pressure 
-        drops are uniform over each channel"""
-        
-        layerIds = self.layerIds
-        
-        # divide flow equally between channels
-        mDotDF = self.get('multiChannel',slice(None),['mDot'])
-        mDot = float(mDotDF['mDot'])
-        mDotInit = mDot/self.nChannel
-        
-        # assign inital flow values to each channel
-        for channelId in layerIds['channel']:
-            self.update('channel',(channelId),['mDot'],mDotInit)
-        
-        self._stepSolve()
-        
-    def _radialSolve(self):
-        """Solves rod properties using the obtained coolant properties"""
-        pass
-    
     def solve(self,mDot,pIn,tIn):
         """Fully solves coolant and rod properties for specified values.
         first iteratively solves coolant properties. Then uses coolant 
@@ -176,12 +112,106 @@ class MultiChannel():
             self.update('channel',(channelId),['pIn','tIn'],(pIn,tIn))
         
         # solve coolant properties at each axial layer
-        self._axialSolve()
+        self._axialSolve(mDot,pIn)
         
         # solve rod properties at each radial layer
         # self._radialSolve()
+    
+    def _axialSolve(self,mDotCore,pIn):
+        """Iteratively solves coolant properties. Converges when pressure 
+        drops are uniform over each channel
         
-    def get(self,layer,index,props):
+        parameters
+        ----------
+        mDotCore - float
+            core mass flow rate
+        pIn - float
+            core inlet pressure
+        
+        """
+        
+        nChannel = self.nChannel
+        
+        # Initialize mDot and pOut histories with boundary condition
+        mDots = np.array([0]*nChannel)
+        pOuts = np.array([pIn]*nChannel)
+        
+        # initial guess - divide core flow equally between channels
+        mDot = np.array([mDotCore/nChannel]*nChannel)
+        
+        while True:
+            # calculate outlet pressures from intial guess
+            pOut = self._stepSolve(mDot)
+            
+            # check break condition
+            if converged(pOut-pIn):
+                break
+            
+            # append mDot and pOut to histories
+            pOuts = np.vstack([pOuts,pOut])
+            mDots = np.vstack([mDots,mDot])
+            
+            # Calculate next mDot guess
+            pOut0 = pOuts[-2,:]
+            pOut1 = pOuts[-1,:]
+            mDot0 = mDots[-2,:]
+            mDot1 = mDots[-1,:]
+            R     = (mDot1-mDot0)/(pOut1-pOut0)
+            
+            pOutg = np.sum(pOut1*R)/np.sum(R)
+            mDot = mDot1 + (pOutg-pOut1)*R
+    
+    def _stepSolve(self,mDots):
+        """Fully solves the system for the specified input mass flow rates.
+        A single solution step in solving the full core coolant props
+        
+        parameters
+        ----------
+        mDots - array
+            array of mass flow rates describing the flow rates in each channel
+        
+        """
+        
+        layerIds = self.layerIds
+        
+        # populate mass flow rates for each channel
+        for channelId in layerIds['channel']:
+            self.update('channel',(channelId),['mDot'],mDots[channelId])
+        
+        # solve axial bulk coolant properties
+        for channelId in layerIds['channel']:
+            # get the inlet conditions and flow geometry for the channel
+            mDot,tIn,pIn,hyD,Af = self.get('channel',(channelId),
+                                           ['mDot','tIn','pIn','hyD','Af'])
+            
+            # solve and save coolant properties in each axial layer
+            for axialId in layerIds['axial']:
+                # get power production and geometry at the axial layer
+                q,dz = self.get('axial',(channelId,axialId),['q','dz'])
+                
+                # solve coolant properties for the axial layer
+                out = axl.axialHelper(pIn,tIn,mDot,q,hyD,Af,dz)
+                
+                # save coolant properties for the axial layer
+                self.update('axial',(channelId,axialId),
+                            ["pIn","p","pOut","tIn","t","tOut",
+                            "dPtot","dPaccl","dPgrav","dPfric",
+                            "cp","rho","mu","vel"],
+                            out)
+                
+                # update entrance conditions for the next layer
+                tIn,pIn = self.get('axial',(channelId,axialId),['tOut','pOut'])
+            
+            # update channel outlet behavior based on last layer outputs
+            self.update('channel',(channelId),['tOut','pOut'],(tIn,pIn))
+        
+        return self.get('channel',(slice(None)),['pOut'],mode='array')
+        
+    def _radialSolve(self):
+        """Solves rod properties using the obtained coolant properties"""
+        pass
+        
+    def get(self,layer,index,props,mode='df'):
         """Returns a dataframe at a certain layer of the system
         
         Parameters
@@ -195,7 +225,16 @@ class MultiChannel():
         
         """
         
-        return getattr(self,layer).loc[index,props]
+        data = getattr(self,layer).loc[index,props]
+        
+        if mode == 'df':
+            return data
+        if mode == 'float':
+            # 1 prop, 1 index only
+            return float(data[props])
+        if mode == 'array':
+            # 1 aprop only
+            return np.array(data[props])[:,0]
     
     def update(self,layer,index,props,vals):
         """Updates value in a data frame
@@ -236,4 +275,14 @@ class MultiChannel():
         data1 = pd.concat([data0,df])
         
         # set value
-        setattr(self,layer,data1)      
+        setattr(self,layer,data1)
+
+def converged(vec):
+    """check whether a vector of values has converged ot an average. Return true
+    if the maximum error is less than 1%
+    """
+    
+    mu      = np.mean(vec)
+    err     = abs(abs(mu-vec)/mu)
+    testErr = np.max(err)
+    return testErr < 0.01
