@@ -6,6 +6,7 @@ Created on Tue Mar 22 21:14:23 2022
 """
 
 from CoolProp.CoolProp import PropsSI
+from math import log
 import numpy as np
 import copy
 
@@ -16,12 +17,12 @@ WATER = 'IF97::Water'
 ### MAIN ######################################################################
 ###############################################################################
 
-def axialHelper(pIn,tIn,mDot,q,hyD,Af,dz):
+def axialHelper(pIn,tIn,mDot,q,hyD,flA,dz,grA,form):
     """Solves bulk and exit coolant properties within an axial layer"""
     
     # entrance flow rate conditions
     inFlow = Flow()
-    inFlow.solve(mDot,Af,"P",pIn,"T",tIn,WATER)
+    inFlow.solve(mDot,flA,"P",pIn,"T",tIn,WATER)
     
     # inital guess for bulk and outlet coolant props
     avFlow  = copy.deepcopy(inFlow)
@@ -40,7 +41,7 @@ def axialHelper(pIn,tIn,mDot,q,hyD,Af,dz):
         while True:
             
             # calc outlet conditions
-            outFlow.solve(mDot,Af,"P",pOut,"T",tOut,WATER)
+            outFlow.solve(mDot,flA,"P",pOut,"T",tOut,WATER)
             
             # calc bulk coolant flow
             avFlow = averageFlow(outFlow,inFlow)
@@ -55,7 +56,7 @@ def axialHelper(pIn,tIn,mDot,q,hyD,Af,dz):
                 break
         
         # calculate pressure drop
-        dP = PressDrop(inFlow,outFlow,avFlow,mDot,hyD,Af,dz)
+        dP = PressDrop(inFlow,outFlow,avFlow,mDot,hyD,flA,dz,grA,form)
         
         # solve Pout
         pOut = pIn - dP['dPtotal']
@@ -70,15 +71,15 @@ def axialHelper(pIn,tIn,mDot,q,hyD,Af,dz):
     t = (tIn+tOut)/2
     
     # extract pressure drop data
-    dPtot,dPaccl,dPgrav,dPfric = \
-        dP['dPtotal'],dP['dPaccl'],dP['dPgrav'],dP['dPfric']
+    dPtot,dPaccl,dPgrav,dPfric,dPform = \
+        dP['dPtotal'],dP['dPaccl'],dP['dPgrav'],dP['dPfric'],dP['dPform']
     
     # extract bulk coolant props
     rho,mu,vel = \
         avFlow['rho'],avFlow['mu'],avFlow['vel']
     
     # output results
-    return pIn,p,pOut,tIn,t,tOut,dPtot,dPaccl,dPgrav,dPfric,cp,rho,mu,vel
+    return pIn,p,pOut,tIn,t,tOut,dPtot,dPaccl,dPgrav,dPfric,dPform,cp,rho,mu,vel
 
 ###############################################################################
 ### HELPER FUNCTIONS ##########################################################
@@ -124,6 +125,19 @@ def convTest(vec):
     # return result based on difference in last two values
     return abs(vec[-1]-vec[-2])/vec[-1] < 0.001
 
+def formCalc(Re,vel,rho,flA,grA):
+    """returns the form loss over a spacer grid"""
+    
+    # calculate the reynolds based coeff
+    c = 2.75 - 0.27*log(Re)/log(10)
+    
+    # calculate the loss coefficient
+    eta = grA/flA 
+    k = c*eta/((1-eta)**2)
+    
+    # return pressure drop
+    return k*rho*(vel**2)/2
+
 ###############################################################################
 ### HELPER OBJECTS ############################################################
 ###############################################################################
@@ -135,7 +149,7 @@ class Flow(dict):
     def __init__(self):
         """initialize the flow object"""
     
-    def solve(self,mDot,Af,*args):
+    def solve(self,mDot,flA,*args):
         """solve the flow properties based on flow conditions"""
         
         # cp J/kgK
@@ -148,13 +162,13 @@ class Flow(dict):
         self['rho'] = PropsSI("D",*args)
         
         # fluid velocity
-        self['vel'] = mDot/self['rho']/Af
+        self['vel'] = mDot/self['rho']/flA
 
 class PressDrop(dict):
     """Object that calculates and stores the partial pressure drops and total 
     pressure drop in a system"""
     
-    def __init__(self,inFlow,outFlow,avFlow,mDot,hyD,Af,dz):
+    def __init__(self,inFlow,outFlow,avFlow,mDot,hyD,flA,dz,grA,form):
         """Calculates partial pressure drops and stores them in the object"""
         
         # coolant boundary properties
@@ -167,7 +181,7 @@ class PressDrop(dict):
         vel  = avFlow['vel']
         
         # Re number and friction factor
-        Re = hyD*mDot/(mu*Af)
+        Re = hyD*mDot/(mu*flA)
         f =  frictionFactor(Re)
         
         # acceleration pressure drop
@@ -182,5 +196,9 @@ class PressDrop(dict):
         dPfric = f*dz/hyD*rho*(vel**2)/2
         self['dPfric'] = dPfric
         
+        # form loss due to grids
+        dPform = form*rho*(vel**2)/2 + formCalc(Re,vel,rho,flA,grA)
+        self['dPform'] = dPform
+        
         # total dP
-        self['dPtotal'] = dPaccl + dPgrav + dPfric
+        self['dPtotal'] = dPaccl + dPgrav + dPfric + dPform

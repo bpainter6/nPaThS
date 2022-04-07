@@ -8,31 +8,30 @@ Created on Thu Mar 24 18:18:15 2022
 PROPS = {"multiChannel":["mDot",
                          "pIn","p","pOut","tIn","t","tOut"],
          
-         "channel":["hyD","Af","mDot",
+         "channel":["hyD","flA","mDot",
                     "pIn","p","pOut","tIn","t","tOut",
-                    "dPtot","dPaccl","dPgrav","dPfric"],
+                    "dPtot","dPaccl","dPgrav","dPfric",
+                    "fuA"],
          
          "axial":["q","dz",
                   "pIn","p","pOut","tIn","t","tOut",
-                  "dPtot","dPaccl","dPgrav","dPfric",
-                  "cp","rho","mu","vel"],
+                  "grA",
+                  "dPtot","dPaccl","dPgrav","dPfric","dPform",
+                  "cp","rho","mu","vel","G"],
          
-         "rod":[],
-         
-         "radial":["cond","tempIn","temp","tempOut","rIn","rOut","dr"]
+         "radial":["rIn","rOut","comp","tIn","t","tOut","k"]
          }
 
 INDEXES = {"multiChannel":[],
            "channel":["channel"],
            "axial":["channel","axial"],
-           "rod":["channel","axial","rod"],
-           "radial":["channel","axial","rod","radial"]
+           "radial":["channel","axial","radial"]
            }
 
 import pandas as pd
 import copy
 
-def preallocateDF(layer,layerIds,props=None):
+def preallocateDF(layer,layerIds):
     """Returns an empty, preallocated data frame for a certain layer
     
     parameters
@@ -55,16 +54,15 @@ def preallocateDF(layer,layerIds,props=None):
             tmpDf = copy.deepcopy(df)
             Ids = layerIds[subLayer]
             for ndx1,Id in enumerate(Ids):
-                tmpDf[layer] = Id
+                tmpDf[subLayer] = Id
                 if ndx1 == 0:
                     out = copy.deepcopy(tmpDf)
                 else:
                     out = pd.concat([out,tmpDf])
             df = out
     
-    # use default PROPS if not specified
-    if isinstance(props,type(None)):
-        props = PROPS
+    # extract properties
+    props = PROPS
     
     # assign all nonindexes a value of 0
     for ndx,prop in enumerate(props[layer]):

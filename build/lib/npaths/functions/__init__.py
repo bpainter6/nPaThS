@@ -1,1 +1,0 @@
-from npaths.functions.user import *

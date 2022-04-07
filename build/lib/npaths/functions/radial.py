@@ -5,6 +5,48 @@ Created on Fri Mar 25 00:08:59 2022
 @author: 17066
 """
 
+from math import exp,log
+import numpy as np
+
+def radialHelper(Q,rIn,rOut,rF,comp,tOut):
+    """returns the radial temperature distribution through an annular element
+    
+    Parameters
+    ----------
+    Q - float
+        volumetric heat generation in the axial layer
+    rOut - float
+        outer radius of the element
+    rIn - float
+        inner radius of the element
+    rF - float
+        outer radius of the fuel element
+    comp - str
+        comp name in the element
+    tOut - int
+        temperature at the outer radius of the segment
+    
+    """
+    
+    # Initial Tout guess
+    tIn = tOut
+    tIns = np.array([tIn])
+    
+    while True:
+        t   = (tOut + tIn)/2
+        k   = getConductivity(comp, t)
+        
+        if comp == 'UO2':
+            tIn = Q/4/k*(rOut**2-rIn**2)+tOut
+        else:
+            tIn = Q/2/k*(rF**2)*log(rOut/rIn)+tOut
+        
+        tIns = np.append(tIns,tIn)
+        
+        if convTest(tIns):
+            break
+    
+    return tIn,t,tOut,k
 
 def getConductivity(material, tempK):
     """returns the conductivity of a material at temperature (in K)"""
@@ -25,40 +67,8 @@ def getConductivity(material, tempK):
     
     return k
 
-def getRadTemp(Tout,Rout,Rin,mat,qDens,nSeg=False):
-    """returns the radial temperature distribution through an annular element
+def convTest(vec):
+    """returns whether a vector of values has converged on a steady value"""
     
-    Parameters
-    ----------
-    Tout - float
-        temperature at the outer boundary
-    Rout - float
-        outer radius of the element
-    Rin - floar
-        inner radius of the element
-    mat - str
-        material name in the element
-    qDens - float
-        volumetric heat generation in the element
-    nSeg - int
-        number of segments in the element used to calculate distribution. If
-        left unspecified, nSeg will be calculated automatically
-    
-    """
-    
-    volI = (pi*Rf**2)/nSeg  # volume of each ring
-    Rout, Tout = Rf, Tf     # Temperature at the surface (at Rf)
-    Ti, Ri = [Tf], [Rf]     # lists to store temperature for each node
-    idx = 1
-    while (idx < segN + 1):
-        kf = getConductivity('UO2', Tout)       # W/mK
-        if idx == segN:                         # prevent negative value caused by roundoff errors
-            Rin = 0.0
-        else:
-            Rin = (Rout**2-volI/pi)**0.5                          # calculate the next distance from center
-        Ri.append(Rin)                              # store the radius in the list
-        Tin = -densQ/4/kf*(Rin**2-Rout**2)+Tout                             # calculate the temperature at Rin
-        Ti.append(Tin)                              # append to a list
-        Rout, Tout = Rin, Tin                       # update the BCs for the next ring
-        idx += 1                                    # continue to the next ring
-    print('Tm={:2.1f} kelvin at r={:2.6f}'.format(Tout,Rin))
+    # return result based on difference in last two values
+    return abs(vec[-1]-vec[-2])/vec[-1] < 0.001

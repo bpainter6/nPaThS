@@ -10,10 +10,12 @@ npaths/checkerrors/__init__.py
 npaths/functions/__init__.py
 npaths/functions/axial.py
 npaths/functions/dataframes.py
+npaths/functions/geom.py
+npaths/functions/plot.py
 npaths/functions/radial.py
-npaths/functions/user.py
 npaths/objects/__init__.py
 npaths/objects/dataframes.py
 npaths/objects/helper.py
 npaths/objects/main.py
+npaths/objects/user.py
 tests/__init__.py

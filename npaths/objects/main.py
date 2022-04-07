@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from npaths.functions import dataframes as dfs
 from npaths.functions import axial as axl
-# from npaths.functions import radial as rad
+from npaths.functions import radial as rad
 
 # Global vars
 WATER = 'IF97::Water'
@@ -41,53 +41,45 @@ class MultiChannel():
     
     """
     
-    def __init__(self,power,channelData,axialData,RodData,RadialData):
+    def __init__(self,fuA,dz):
         """Initializes the MultiChannel object by filling all data specificed
         in the dictionaries
         
         parameters
         ----------
-        power - 2D array
-            each row represents the power along the nth channel
-        dz - 1D array
-            describes the width of the axial layers in the system
-        hyD - 1D array
-            describes the hydraulic diameter of the nth channel
+        fuA - 1D array of float
+            fuel cross sectional area in each channel
+        dz - 1D array of float
+            axial layer thickness at each layer
         
         """
         
-        nChannel = len(hyD)
-        nAxial = len(dz)
+        nChannel = len(fuA)
+        nAxial   = len(dz)
         
         layerIds = {}
         layerIds['channel'] = list(range(nChannel))
-        layerIds['axial'] = list(range(nAxial))
+        layerIds['axial']   = list(range(nAxial))
         
         # preallocate layer attributes
-        layers = ['multiChannel','channel','axial','rod','radial']
+        layers = ['multiChannel','channel','axial']
         for layer in layers:
             frame = dfs.preallocateDF(layer,layerIds)
             setattr(self,layer,frame)
         
-        # specify remaining information
+        # set fuA values
+        self.update('channel',(slice(None)),["fuA"],(fuA))
+        
+        # set dz values
         for channelId in layerIds['channel']:
-            # update properties in the channel
-            self.update('channel',(channelId),['hyD','Af'],(hyD[channelId],
-                                                            Af[channelId]))
-            
-            for axialId in layerIds['axial']:
-                # update properties in the axial layer
-                out = (dz[axialId],power[channelId,axialId])
-                self.update('axial',(channelId,axialId),['dz','q'],out)
+            self.update('axial',(channelId,slice(None)),["dz"],(dz))
         
         self.layerIds = layerIds 
         self.nChannel = nChannel
         self.nAxial   = nAxial
     
-    def solve(self,mDot,pIn,tIn):
-        """Fully solves coolant and rod properties for specified values.
-        first iteratively solves coolant properties. Then uses coolant 
-        properties to solve rod properties.
+    def solveFlow(self,mDot,pIn,tIn):
+        """Fully solves flow data. Using specified parameters
         
         parameters
         ----------
@@ -180,36 +172,93 @@ class MultiChannel():
         # solve axial bulk coolant properties
         for channelId in layerIds['channel']:
             # get the inlet conditions and flow geometry for the channel
-            mDot,tIn,pIn,hyD,Af = self.get('channel',(channelId),
-                                           ['mDot','tIn','pIn','hyD','Af'])
+            mDot,tIn,pIn,hyD,flA = self.get('channel',(channelId),
+                                           ['mDot','tIn','pIn','hyD','flA'])
             
             # solve and save coolant properties in each axial layer
             for axialId in layerIds['axial']:
-                # get power production and geometry at the axial layer
-                q,dz = self.get('axial',(channelId,axialId),['q','dz'])
+                # get axial variant data
+                q,dz,grA = self.get('axial',(channelId,axialId),
+                                    ['q','dz','grA'])
                 
-                # solve coolant properties for the axial layer
-                out = axl.axialHelper(pIn,tIn,mDot,q,hyD,Af,dz)
+                # calculate form loss coefficient
+                if axialId == 0:
+                    # entrance losses
+                    form = 1
+                elif axialId == self.nAxial-1:
+                    # exit losses
+                    form = 0.5
+                else:
+                    form = 0
+                
+                # calculate flow conditions at the layer
+                out = axl.axialHelper(pIn,tIn,mDot,q,hyD,flA,dz,grA,form)
                 
                 # save coolant properties for the axial layer
                 self.update('axial',(channelId,axialId),
                             ["pIn","p","pOut","tIn","t","tOut",
-                            "dPtot","dPaccl","dPgrav","dPfric",
+                            "dPtot","dPaccl","dPgrav","dPfric","dPform",
                             "cp","rho","mu","vel"],
                             out)
                 
                 # update entrance conditions for the next layer
                 tIn,pIn = self.get('axial',(channelId,axialId),['tOut','pOut'])
             
-            # update channel outlet behavior based on last layer outputs
-            self.update('channel',(channelId),['tOut','pOut'],(tIn,pIn))
+            # set the channel outlet pressure
+            self.update('channel',(channelId),['pOut'],(pIn))
         
         return self.get('channel',(slice(None)),['pOut'],mode='array')
-        
-    def _radialSolve(self):
+    
+    def solveTemps(self,rod):
         """Solves rod properties using the obtained coolant properties"""
-        pass
         
+        layerIds = self.layerIds
+        layerIds['radial'] = rod.radialIds
+        layerIds['channel'] = rod.channelIds
+        
+        # preallocate layer attributes
+        frame = dfs.preallocateDF('radial',layerIds)
+        setattr(self,rod.Id,frame)
+        
+        # fuel radius
+        rF = rod.rFuel
+        
+        # update rod data adn solve
+        for channelId in layerIds['channel']:
+            # channel properties
+            fuA = self.get('channel',(channelId),['fuA'],mode='float')
+            
+            for axialId in layerIds['axial']:
+                # boundary conditions
+                q,tOut = self.get('axial',(channelId,axialId),['q','t'],
+                                    mode='float')
+                
+                # get cross sectional heat generation
+                Q = q/fuA
+                
+                # define radial data
+                props = ['rIn','rOut','comp']
+                vals = rod.rIn,rod.rOut,rod.comp
+                self.update(rod.Id,(channelId,axialId,slice(None)),props,vals)
+                
+                # calc radial conditions in each radial layer
+                for radialId in layerIds['radial']:
+                    # radial conditions
+                    rIn,rOut = self.get(rod.Id,(channelId,axialId,radialId),
+                                           ['rIn','rOut'],mode='float')
+                    comp = self.get(rod.Id,(channelId,axialId,radialId),
+                                           ['comp'],mode='str')
+                    
+                    out = rad.radialHelper(Q,rIn,rOut,rF,comp,tOut)
+                    
+                    # save radial properties for the radial layer
+                    self.update(rod.Id,(channelId,axialId,radialId),
+                                ["tIn","t","tOut","k"],out)
+                    
+                    # update entrance conditions for the next layer
+                    tOut = self.get(rod.Id,(channelId,axialId,radialId),
+                                    ['tIn'],mode='float')
+                    
     def get(self,layer,index,props,mode='df'):
         """Returns a dataframe at a certain layer of the system
         
@@ -228,12 +277,29 @@ class MultiChannel():
         
         if mode == 'df':
             return data
+        
         if mode == 'float':
             # 1 prop, 1 index only
-            return float(data[props])
+            outs = []
+            for prop in props:
+                outs.append(float(data[prop]))
+        
         if mode == 'array':
-            # 1 aprop only
-            return np.array(data[props])[:,0]
+            # 1 prop only
+            outs = []
+            for prop in props:
+                outs.append(np.array(data[prop]))
+        
+        if mode == 'str':
+            # 1 prop 1 index only
+            outs = []
+            for prop in props:
+                outs.append(str(data[prop]))
+        
+        if len(props) == 1:
+            return outs[0]
+        else:
+            return tuple(outs)
     
     def update(self,layer,index,props,vals):
         """Updates value in a data frame
@@ -252,29 +318,22 @@ class MultiChannel():
         """
         
         data = getattr(self,layer)
-        data.loc[index,props] = vals
+        
+        # allow array inputs
+        if isinstance(vals,tuple) and isinstance(vals[0],type(np.array([]))):
+            for ndx,prop in enumerate(props):
+                val = vals[ndx]
+                
+                # flatten 2D input
+                if val.ndim > 1:
+                    val = val.flatten()
+                
+                data.loc[index,prop] = val
+        
+        else:
+            data.loc[index,props] = vals
+        
         setattr(self,layer,data)
-    
-    def add(self,layer,df):
-        """adds a data frame to a layer in the object
-        
-        Parameters
-        ----------
-        layer - str
-            layer of the system that dataFrame should be extracted from
-        df - pandas dataframe
-            dataframe to be appended to the layer
-            
-        """
-        
-        # pull appropriate data frame
-        data0 = getattr(self,layer)
-        
-        # concat data
-        data1 = pd.concat([data0,df])
-        
-        # set value
-        setattr(self,layer,data1)
 
 def converged(vec):
     """check whether a vector of values has converged ot an average. Return true
@@ -284,4 +343,4 @@ def converged(vec):
     mu      = np.mean(vec)
     err     = abs(abs(mu-vec)/mu)
     testErr = np.max(err)
-    return testErr < 0.01
+    return testErr < 0.001
